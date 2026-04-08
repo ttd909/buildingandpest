@@ -67,10 +67,11 @@ export function LiveAreaCapture({
     let stream: MediaStream | null = null;
 
     // Try to get audio + video together
+    // Use soft (ideal) constraints — iOS Safari rejects hard constraints on some devices
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
-        video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
+        video: { facingMode: { ideal: "environment" } },
       });
     } catch {
       // Camera denied or unavailable — try audio only
@@ -92,10 +93,14 @@ export function LiveAreaCapture({
     videoStreamRef.current = stream;
 
     // Attach video stream to the video element
+    // iOS Safari requires explicit .play() after setting srcObject
     const videoTrack = stream.getVideoTracks()[0];
     if (videoTrack && videoRef.current) {
       videoRef.current.srcObject = new MediaStream([videoTrack]);
-      setCameraReady(true);
+      videoRef.current.play().catch(() => {
+        // autoplay blocked — will recover when user interacts
+      });
+      // cameraReady is set via onLoadedMetadata on the video element
     }
 
     // Record ONLY the audio track — keeps file small
@@ -243,6 +248,7 @@ export function LiveAreaCapture({
         autoPlay
         playsInline
         muted
+        onLoadedMetadata={() => setCameraReady(true)}
         className="absolute inset-0 w-full h-full object-cover"
       />
       {/* Hidden canvas for frame capture */}

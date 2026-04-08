@@ -72,8 +72,16 @@ function generateFromMarkersAndTranscript(session: AreaCaptureSession, now: stri
     const tags = marker.tagHint ? [marker.tagHint] : [];
     const spokenContext = extractSpokenContext(transcriptSegments, marker.timestampSeconds);
 
+    // Assign each photo to exactly its nearest marker — prevents duplicates across findings
     const nearbyPhotos = (photos || [])
-      .filter((p) => Math.abs(p.timestampSeconds - marker.timestampSeconds) < 30)
+      .filter((p) => {
+        const myDist = Math.abs(p.timestampSeconds - marker.timestampSeconds);
+        if (myDist > 60) return false; // too far from any marker
+        const nearest = markers.reduce((best, m) =>
+          Math.abs(p.timestampSeconds - m.timestampSeconds) < Math.abs(p.timestampSeconds - best.timestampSeconds) ? m : best
+        );
+        return nearest.id === marker.id;
+      })
       .slice(0, 3)
       .map((p) => ({ id: p.id, dataUrl: p.dataUrl, capturedAt: p.capturedAt, fileName: p.fileName } as CapturedPhoto));
 
