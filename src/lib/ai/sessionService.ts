@@ -11,8 +11,8 @@ export interface SessionGroupInput {
 
 /**
  * Generate findings from a completed area capture session.
- * Uses real Whisper transcriptSegments when available; falls back to
- * marker-only grouping when audio transcription wasn't possible.
+ * Uses GPT-4o mini (vision) when an OpenAI key is configured;
+ * falls back to rule-based wording if the call fails or no key.
  */
 export async function generateFindingsFromSession(
   input: SessionGroupInput
@@ -42,7 +42,7 @@ function extractSpokenContext(
 
 /**
  * Tight focal context: just what was being said at the moment of the tap.
- * Used for professional wording so it only describes the one thing in the photo.
+ * Used for professional wording so it only describes the one defect in the photo.
  */
 function extractFocalContext(
   segments: TranscriptSegment[],
@@ -59,7 +59,44 @@ function extractFocalContext(
     .trim();
 }
 
-function generateFromMarkersAndTranscript(session: AreaCaptureSession, now: string): Finding[] {
+type AiOut = { title: string; wording: string; recommendation: string; section: ReportSection | null };
+
+/**
+ * Call GPT-4o mini with vision via the /api/generate-finding route.
+ * Falls back to rule-based output on any failure.
+ */
+async function callGptFinding(params: {
+  areaName: string;
+  focalContext: string;
+  severity: Severity;
+  tags: string[];
+  photoDataUrl?: string;
+}): Promise<AiOut> {
+  const { areaName, focalContext, severity, tags, photoDataUrl } = params;
+  try {
+    const res = await fetch("/api/generate-finding", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ focalContext, areaName, severity, photoDataUrl }),
+    });
+    if (!res.ok) throw new Error("http_error");
+    const data = await res.json();
+    if (data.error || !data.title || !data.wording || !data.recommendation || !data.section) {
+      throw new Error(data.error ?? "incomplete_response");
+    }
+    return {
+      title: data.title,
+      wording: data.wording,
+      recommendation: data.recommendation,
+      section: data.section as ReportSection,
+    };
+  } catch (err) {
+    console.warn("[sessionService] GPT finding call failed, using rule-based fallback:", err);
+    return deriveRuleBasedOutput({ areaName, spokenContext: focalContext, tags, severity });
+  }
+}
+
+async function generateFromMarkersAndTranscript(session: AreaCaptureSession, now: string): Promise<Finding[]> {
   const { markers, photos, transcriptSegments = [], areaName } = session;
 
   if (markers.length === 0 && transcriptSegments.length === 0) {
@@ -100,67 +137,72 @@ function generateFromMarkersAndTranscript(session: AreaCaptureSession, now: stri
   // Sort markers so we can find neighbours for window clamping
   const sortedMarkers = [...markers].sort((a, b) => a.timestampSeconds - b.timestampSeconds);
 
-  return markers.map((marker) => {
-    const severity = marker.severityHint || "minor";
-    const tags = marker.tagHint ? [marker.tagHint] : [];
+  // Process all markers in parallel — GPT calls run concurrently
+  return Promise.all(
+    markers.map(async (marker) => {
+      const severity = marker.severityHint || "minor";
+      const tags = marker.tagHint ? [marker.tagHint] : [];
 
-    const idx = sortedMarkers.findIndex((m) => m.id === marker.id);
-    const prevTs = idx > 0 ? sortedMarkers[idx - 1].timestampSeconds : undefined;
-    const nextTs = idx < sortedMarkers.length - 1 ? sortedMarkers[idx + 1].timestampSeconds : undefined;
+      const idx = sortedMarkers.findIndex((m) => m.id === marker.id);
+      const prevTs = idx > 0 ? sortedMarkers[idx - 1].timestampSeconds : undefined;
+      const nextTs = idx < sortedMarkers.length - 1 ? sortedMarkers[idx + 1].timestampSeconds : undefined;
 
-    // Full transcript for voice note (bounded by neighbour markers)
-    const spokenContext = extractSpokenContext(transcriptSegments, marker.timestampSeconds, prevTs, nextTs);
-    // Tight focal context for professional wording (only what was said at the tap)
-    const focalContext = extractFocalContext(transcriptSegments, marker.timestampSeconds, prevTs, nextTs);
+      // Full transcript for voice note (bounded by neighbour markers)
+      const spokenContext = extractSpokenContext(transcriptSegments, marker.timestampSeconds, prevTs, nextTs);
+      // Tight focal context for professional wording (only what was said at the tap)
+      const focalContext = extractFocalContext(transcriptSegments, marker.timestampSeconds, prevTs, nextTs);
 
-    // Assign each photo to exactly its nearest marker — prevents duplicates across findings
-    const nearbyPhotos = (photos || [])
-      .filter((p) => {
-        const myDist = Math.abs(p.timestampSeconds - marker.timestampSeconds);
-        if (myDist > 60) return false; // too far from any marker
-        const nearest = markers.reduce((best, m) =>
-          Math.abs(p.timestampSeconds - m.timestampSeconds) < Math.abs(p.timestampSeconds - best.timestampSeconds) ? m : best
-        );
-        return nearest.id === marker.id;
-      })
-      .slice(0, 3)
-      .map((p) => ({ id: p.id, dataUrl: p.dataUrl, capturedAt: p.capturedAt, fileName: p.fileName } as CapturedPhoto));
+      // Assign each photo to exactly its nearest marker — prevents duplicates across findings
+      const nearbyPhotos = (photos || [])
+        .filter((p) => {
+          const myDist = Math.abs(p.timestampSeconds - marker.timestampSeconds);
+          if (myDist > 60) return false;
+          const nearest = markers.reduce((best, m) =>
+            Math.abs(p.timestampSeconds - m.timestampSeconds) < Math.abs(p.timestampSeconds - best.timestampSeconds) ? m : best
+          );
+          return nearest.id === marker.id;
+        })
+        .slice(0, 3)
+        .map((p) => ({ id: p.id, dataUrl: p.dataUrl, capturedAt: p.capturedAt, fileName: p.fileName } as CapturedPhoto));
 
-    // Professional wording uses focalContext (tight window) so it describes only
-    // the one defect captured at this tap — voice note uses the broader spokenContext
-    const aiOut = deriveAiOutput({ areaName, spokenContext: focalContext, tags, severity });
+      // Send primary photo (auto-captured at tap time) to GPT for vision analysis
+      const primaryPhotoDataUrl = nearbyPhotos[0]?.dataUrl;
 
-    return {
-      id: generateId(),
-      areaName,
-      photos: nearbyPhotos,
-      voiceNote: spokenContext
-        ? { id: generateId(), transcript: spokenContext, transcriptStatus: "done" as const, recordedAt: session.startedAt }
-        : undefined,
-      tags,
-      severity,
-      capturedAt: now,
-      sourceSessionId: session.id,
-      aiTitle: aiOut.title,
-      aiProfessionalWording: aiOut.wording,
-      aiRecommendation: aiOut.recommendation,
-      aiSuggestedSection: aiOut.section ?? sectionMap[severity],
-      aiProcessed: true,
-      reportSection: aiOut.section ?? sectionMap[severity],
-      finalTitle: aiOut.title,
-      finalWording: aiOut.wording,
-      finalRecommendation: aiOut.recommendation,
-      excludeFromReport: false,
-    };
-  });
+      const aiOut = await callGptFinding({ areaName, focalContext, severity, tags, photoDataUrl: primaryPhotoDataUrl });
+
+      return {
+        id: generateId(),
+        areaName,
+        photos: nearbyPhotos,
+        voiceNote: spokenContext
+          ? { id: generateId(), transcript: spokenContext, transcriptStatus: "done" as const, recordedAt: session.startedAt }
+          : undefined,
+        tags,
+        severity,
+        capturedAt: now,
+        sourceSessionId: session.id,
+        aiTitle: aiOut.title,
+        aiProfessionalWording: aiOut.wording,
+        aiRecommendation: aiOut.recommendation,
+        aiSuggestedSection: aiOut.section ?? sectionMap[severity],
+        aiProcessed: true,
+        reportSection: aiOut.section ?? sectionMap[severity],
+        finalTitle: aiOut.title,
+        finalWording: aiOut.wording,
+        finalRecommendation: aiOut.recommendation,
+        excludeFromReport: false,
+      };
+    })
+  );
 }
 
-function deriveAiOutput(input: {
+/** Rule-based fallback — used when GPT call fails or no API key */
+function deriveRuleBasedOutput(input: {
   areaName: string;
   spokenContext: string;
   tags: string[];
   severity: Severity;
-}): { title: string; wording: string; recommendation: string; section: ReportSection | null } {
+}): AiOut {
   const { areaName, spokenContext, tags, severity } = input;
   const text = spokenContext.toLowerCase();
 
