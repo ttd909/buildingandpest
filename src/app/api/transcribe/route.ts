@@ -41,6 +41,10 @@ export async function POST(req: NextRequest) {
     if (!res.ok) {
       const err = await res.text();
       console.error("[transcribe] Whisper error:", res.status, err);
+      // Surface quota/auth errors explicitly so client can show a message
+      if (res.status === 401 || res.status === 402 || res.status === 429) {
+        return NextResponse.json({ transcript: "", segments: [], error: res.status === 401 ? "invalid_key" : "quota_exceeded" });
+      }
       return NextResponse.json({ transcript: "", segments: [] });
     }
 
