@@ -111,24 +111,21 @@ export default function InspectionWorkflowPage({
           : audioBlob.type.includes("ogg") ? "ogg"
           : "webm";
         fd.append("audio", audioBlob, `recording.${ext}`);
-        const res = await fetch("/api/transcribe", { method: "POST", body: fd });
-        if (res.ok) {
-          const { transcript, segments } = await res.json();
-          const newStatus = segments?.length > 0 ? "done" : "none";
-          transcribedSession = {
-            ...session,
-            transcript,
-            transcriptSegments: segments ?? [],
-            transcriptStatus: newStatus,
-          };
-          updateSession(id, areaId, {
-            transcript,
-            transcriptSegments: segments ?? [],
-            transcriptStatus: newStatus,
-          });
-        }
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 55000);
+        const res = await fetch("/api/transcribe", { method: "POST", body: fd, signal: controller.signal });
+        clearTimeout(timeout);
+
+        const json = await res.json();
+        const segments = json.segments ?? [];
+        const transcript = json.transcript ?? "";
+        const newStatus: AreaCaptureSession["transcriptStatus"] = segments.length > 0 ? "done" : "none";
+
+        transcribedSession = { ...session, transcript, transcriptSegments: segments, transcriptStatus: newStatus };
+        updateSession(id, areaId, { transcript, transcriptSegments: segments, transcriptStatus: newStatus });
       } catch {
-        // Fall through — generate findings without real transcript
+        // Timeout or network error — generate findings without transcript
+        updateSession(id, areaId, { transcriptStatus: "none" });
       }
     }
 
@@ -495,6 +492,12 @@ function CompletedAreaRow({
             {area.findings.length} finding{area.findings.length !== 1 ? "s" : ""}
             {area.session && area.session.markers.length > 0 && (
               <> · {area.session.markers.length} marker{area.session.markers.length !== 1 ? "s" : ""}</>
+            )}
+            {area.session && (
+              <> · transcript: <span className={
+                area.session.transcriptStatus === "done" ? "text-green-500" :
+                area.session.transcriptStatus === "none" ? "text-red-400" : "text-amber-400"
+              }>{area.session.transcriptStatus}{area.session.transcriptStatus === "done" ? ` (${area.session.transcriptSegments?.length ?? 0} seg)` : ""}</span></>
             )}
           </p>
         </div>
