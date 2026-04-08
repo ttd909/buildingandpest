@@ -21,9 +21,39 @@ export async function generateFindingsFromSession(
   return generateFromMarkersAndTranscript(input.session, now);
 }
 
-function extractSpokenContext(segments: TranscriptSegment[], markerTs: number): string {
+/**
+ * Broad voice-note context: everything the inspector said around this marker,
+ * bounded by neighbouring markers so speech never bleeds into adjacent findings.
+ */
+function extractSpokenContext(
+  segments: TranscriptSegment[],
+  markerTs: number,
+  prevMarkerTs?: number,
+  nextMarkerTs?: number,
+): string {
+  const start = Math.max(markerTs - 5, prevMarkerTs !== undefined ? prevMarkerTs + 0.5 : 0);
+  const end = nextMarkerTs !== undefined ? Math.min(markerTs + 20, nextMarkerTs - 0.5) : markerTs + 20;
   return segments
-    .filter((s) => s.start <= markerTs + 20 && s.end >= markerTs - 5)
+    .filter((s) => s.start <= end && s.end >= start)
+    .map((s) => s.text)
+    .join(" ")
+    .trim();
+}
+
+/**
+ * Tight focal context: just what was being said at the moment of the tap.
+ * Used for professional wording so it only describes the one thing in the photo.
+ */
+function extractFocalContext(
+  segments: TranscriptSegment[],
+  markerTs: number,
+  prevMarkerTs?: number,
+  nextMarkerTs?: number,
+): string {
+  const start = Math.max(markerTs - 4, prevMarkerTs !== undefined ? prevMarkerTs + 0.5 : 0);
+  const end = nextMarkerTs !== undefined ? Math.min(markerTs + 6, nextMarkerTs - 0.5) : markerTs + 6;
+  return segments
+    .filter((s) => s.start <= end && s.end >= start)
     .map((s) => s.text)
     .join(" ")
     .trim();
@@ -67,10 +97,21 @@ function generateFromMarkersAndTranscript(session: AreaCaptureSession, now: stri
     pest: "pest_findings",
   };
 
+  // Sort markers so we can find neighbours for window clamping
+  const sortedMarkers = [...markers].sort((a, b) => a.timestampSeconds - b.timestampSeconds);
+
   return markers.map((marker) => {
     const severity = marker.severityHint || "minor";
     const tags = marker.tagHint ? [marker.tagHint] : [];
-    const spokenContext = extractSpokenContext(transcriptSegments, marker.timestampSeconds);
+
+    const idx = sortedMarkers.findIndex((m) => m.id === marker.id);
+    const prevTs = idx > 0 ? sortedMarkers[idx - 1].timestampSeconds : undefined;
+    const nextTs = idx < sortedMarkers.length - 1 ? sortedMarkers[idx + 1].timestampSeconds : undefined;
+
+    // Full transcript for voice note (bounded by neighbour markers)
+    const spokenContext = extractSpokenContext(transcriptSegments, marker.timestampSeconds, prevTs, nextTs);
+    // Tight focal context for professional wording (only what was said at the tap)
+    const focalContext = extractFocalContext(transcriptSegments, marker.timestampSeconds, prevTs, nextTs);
 
     // Assign each photo to exactly its nearest marker — prevents duplicates across findings
     const nearbyPhotos = (photos || [])
@@ -85,7 +126,9 @@ function generateFromMarkersAndTranscript(session: AreaCaptureSession, now: stri
       .slice(0, 3)
       .map((p) => ({ id: p.id, dataUrl: p.dataUrl, capturedAt: p.capturedAt, fileName: p.fileName } as CapturedPhoto));
 
-    const aiOut = deriveAiOutput({ areaName, spokenContext, tags, severity });
+    // Professional wording uses focalContext (tight window) so it describes only
+    // the one defect captured at this tap — voice note uses the broader spokenContext
+    const aiOut = deriveAiOutput({ areaName, spokenContext: focalContext, tags, severity });
 
     return {
       id: generateId(),
