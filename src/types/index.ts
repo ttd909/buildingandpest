@@ -87,6 +87,14 @@ export type QuickTag = (typeof QUICK_TAGS)[number];
 
 // ─── Session types (live area capture) ────────────────────────────────────────
 
+/** A timestamped segment from Whisper transcription */
+export interface TranscriptSegment {
+  text: string;
+  /** Seconds from session start */
+  start: number;
+  end: number;
+}
+
 /** A one-tap issue marker created during live recording */
 export interface IssueMarker {
   id: string;
@@ -118,6 +126,8 @@ export interface AreaCaptureSession {
   audioBlobUrl?: string;
   /** Raw transcript from STT or placeholder */
   transcript?: string;
+  /** Timestamped segments from Whisper verbose_json — each has start/end in seconds from session start */
+  transcriptSegments?: TranscriptSegment[];
   transcriptStatus: "none" | "pending" | "done" | "manual";
   markers: IssueMarker[];
   photos: SessionPhoto[];

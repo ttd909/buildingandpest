@@ -23,6 +23,7 @@ interface InspectionStore {
 
   // Bootstrap
   initialize: () => Promise<void>;
+  loadDemo: () => Promise<void>;
 
   // Inspection CRUD
   createInspection: (data: Omit<Inspection, "id" | "createdAt" | "updatedAt" | "areas" | "status">) => Inspection;
@@ -76,20 +77,16 @@ export const useInspectionStore = create<InspectionStore>()(
     initialize: async () => {
       if (get().initialized) return;
       const persisted = await loadAllInspections();
+      set({ inspections: persisted, initialized: true });
+    },
 
-      if (persisted.length === 0) {
-        set({ inspections: DEMO_INSPECTIONS, initialized: true });
-        for (const insp of DEMO_INSPECTIONS) {
-          await saveInspection(insp);
-        }
-      } else {
-        const existingIds = new Set(persisted.map((i) => i.id));
-        const demoToAdd = DEMO_INSPECTIONS.filter((d) => !existingIds.has(d.id));
-        const all = [...persisted, ...demoToAdd];
-        set({ inspections: all, initialized: true });
-        for (const insp of demoToAdd) {
-          await saveInspection(insp);
-        }
+    loadDemo: async () => {
+      const existingIds = new Set(get().inspections.map((i) => i.id));
+      const toAdd = DEMO_INSPECTIONS.filter((d) => !existingIds.has(d.id));
+      if (toAdd.length === 0) return;
+      set((s) => ({ inspections: [...toAdd, ...s.inspections] }));
+      for (const insp of toAdd) {
+        await saveInspection(insp);
       }
     },
 

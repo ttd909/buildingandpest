@@ -30,7 +30,7 @@ import { cn } from "@/lib/utils";
 type PageState =
   | { mode: "overview" }
   | { mode: "capturing"; areaId: string }
-  | { mode: "processing"; areaId: string }
+  | { mode: "processing"; areaId: string; step: "transcribing" | "grouping" }
   | { mode: "done"; areaId: string };
 
 export default function InspectionWorkflowPage({
@@ -94,17 +94,48 @@ export default function InspectionWorkflowPage({
   };
 
   const handleSessionFinished = async (session: AreaCaptureSession, areaId: string) => {
-    // 1. Save session
+    // 1. Save session and show processing state
     saveSession(id, areaId, session);
     setStatus(id, "in_progress");
+    setPageState({ mode: "processing", areaId, step: "grouping" });
 
-    // 2. Show processing state
-    setPageState({ mode: "processing", areaId });
+    // 2. Transcribe audio (if recorded and not already failed)
+    let transcribedSession = session;
+    if (session.audioBlobUrl && session.transcriptStatus === "pending") {
+      setPageState({ mode: "processing", areaId, step: "transcribing" });
+      try {
+        const audioBlob = await fetch(session.audioBlobUrl).then((r) => r.blob());
+        const fd = new FormData();
+        // Use correct extension — iOS records audio/mp4, desktop records audio/webm
+        const ext = audioBlob.type.includes("mp4") || audioBlob.type.includes("m4a") ? "m4a"
+          : audioBlob.type.includes("ogg") ? "ogg"
+          : "webm";
+        fd.append("audio", audioBlob, `recording.${ext}`);
+        const res = await fetch("/api/transcribe", { method: "POST", body: fd });
+        if (res.ok) {
+          const { transcript, segments } = await res.json();
+          const newStatus = segments?.length > 0 ? "done" : "none";
+          transcribedSession = {
+            ...session,
+            transcript,
+            transcriptSegments: segments ?? [],
+            transcriptStatus: newStatus,
+          };
+          updateSession(id, areaId, {
+            transcript,
+            transcriptSegments: segments ?? [],
+            transcriptStatus: newStatus,
+          });
+        }
+      } catch {
+        // Fall through — generate findings without real transcript
+      }
+    }
 
-    // 3. Generate findings from session
-    const area = inspection.areas.find((a) => a.id === areaId);
+    // 3. Generate findings from session (uses transcriptSegments if available)
+    setPageState({ mode: "processing", areaId, step: "grouping" });
     const findings = await generateFindingsFromSession({
-      session,
+      session: transcribedSession,
       inspectionType: inspection.inspectionType,
     });
 
@@ -163,11 +194,13 @@ export default function InspectionWorkflowPage({
           )}
         </div>
         <p className="text-white text-xl font-bold mb-2">
-          {isDone ? "Findings generated" : "AI grouping findings…"}
+          {isDone ? "Findings generated" : pageState.mode === "processing" && pageState.step === "transcribing" ? "Transcribing audio…" : "Grouping findings…"}
         </p>
         <p className="text-white/50 text-sm text-center">
           {isDone
             ? `${inspection.areas.find(a => a.id === pageState.areaId)?.findings.length ?? 0} findings ready for review`
+            : pageState.mode === "processing" && pageState.step === "transcribing"
+            ? "Sending to Whisper AI…"
             : `Processing ${area?.name}…`}
         </p>
         {!isDone && (

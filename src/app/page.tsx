@@ -4,11 +4,13 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Zap, Shield, FileText, ArrowRight, ClipboardList } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { useInspectionStore } from "@/lib/store/useInspectionStore";
 
 export default function LoginPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [demoLoading, setDemoLoading] = useState(false);
+  const { initialize, loadDemo } = useInspectionStore();
 
   const handleSignIn = async () => {
     setLoading(true);
@@ -18,7 +20,8 @@ export default function LoginPage() {
 
   const handleDemo = async () => {
     setDemoLoading(true);
-    await new Promise((r) => setTimeout(r, 400));
+    await initialize();
+    await loadDemo();
     router.push("/dashboard");
   };
 

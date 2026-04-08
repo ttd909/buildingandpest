@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Edit2, Trash2, Copy, MoveRight, Mic, FileText } from "lucide-react";
+import { Edit2, Trash2, Copy, MoveRight, Mic } from "lucide-react";
 import { Finding } from "@/types";
 import { SeverityBadge } from "@/components/ui/SeverityBadge";
 import { ConfirmModal } from "@/components/ui/Modal";
@@ -74,20 +74,16 @@ export function FindingCard({
                   </div>
                 )}
 
+                {/* Voice transcript or text note */}
+                {displayNote && !compact && (
+                  <p className="text-xs text-slate-400 mt-1.5 italic line-clamp-2 flex items-start gap-1">
+                    <Mic className="w-3 h-3 flex-shrink-0 mt-0.5 text-slate-300" />
+                    <span>"{displayNote}"</span>
+                  </p>
+                )}
+
                 {/* Indicators */}
                 <div className="flex items-center gap-2 mt-1.5">
-                  {finding.voiceNote && (
-                    <span className="flex items-center gap-0.5 text-xs text-slate-400">
-                      <Mic className="w-3 h-3" />
-                      Voice
-                    </span>
-                  )}
-                  {finding.textNote && (
-                    <span className="flex items-center gap-0.5 text-xs text-slate-400">
-                      <FileText className="w-3 h-3" />
-                      Note
-                    </span>
-                  )}
                   {finding.photos.length > 1 && (
                     <span className="text-xs text-slate-400">
                       {finding.photos.length} photos

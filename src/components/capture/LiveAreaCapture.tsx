@@ -169,7 +169,9 @@ export function LiveAreaCapture({
 
     let blobUrl = audioBlobUrl;
     if (!recordingFailed && chunksRef.current.length > 0) {
-      const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+      // Use the recorder's actual MIME type — iOS Safari records audio/mp4, not audio/webm
+      const mimeType = mediaRecorderRef.current?.mimeType || "audio/webm";
+      const blob = new Blob(chunksRef.current, { type: mimeType });
       blobUrl = URL.createObjectURL(blob);
     }
 

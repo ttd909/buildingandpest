@@ -1,7 +1,7 @@
 // InspectFlow AI Service Worker
 // Provides offline-first caching for core app assets
 
-const CACHE_NAME = "inspectflow-v1";
+const CACHE_NAME = "inspectflow-v4";
 const STATIC_ASSETS = [
   "/",
   "/dashboard",
