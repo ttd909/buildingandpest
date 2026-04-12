@@ -521,7 +521,22 @@ function ReportFindingRow({
 // jsPDF only supports JPEG and PNG. Camera photos may arrive as WebP, HEIC, or
 // other formats. Convert everything to JPEG via canvas before embedding.
 
-function toJpegDataUrl(dataUrl: string): Promise<string> {
+async function toJpegDataUrl(src: string): Promise<string> {
+  // For Firebase Storage / HTTP URLs, fetch as blob first to avoid
+  // canvas cross-origin tainting issues.
+  let imgSrc = src;
+  let blobUrl: string | null = null;
+  if (src.startsWith("http")) {
+    try {
+      const res = await fetch(src);
+      const blob = await res.blob();
+      blobUrl = URL.createObjectURL(blob);
+      imgSrc = blobUrl;
+    } catch {
+      // fall through and try directly
+    }
+  }
+
   return new Promise((resolve, reject) => {
     const img = new window.Image();
     img.onload = () => {
@@ -530,15 +545,24 @@ function toJpegDataUrl(dataUrl: string): Promise<string> {
         canvas.width = img.naturalWidth;
         canvas.height = img.naturalHeight;
         const ctx = canvas.getContext("2d");
-        if (!ctx) return reject(new Error("canvas unavailable"));
+        if (!ctx) {
+          if (blobUrl) URL.revokeObjectURL(blobUrl);
+          return reject(new Error("canvas unavailable"));
+        }
         ctx.drawImage(img, 0, 0);
-        resolve(canvas.toDataURL("image/jpeg", 0.88));
+        const result = canvas.toDataURL("image/jpeg", 0.88);
+        if (blobUrl) URL.revokeObjectURL(blobUrl);
+        resolve(result);
       } catch (e) {
+        if (blobUrl) URL.revokeObjectURL(blobUrl);
         reject(e);
       }
     };
-    img.onerror = () => reject(new Error("image load failed"));
-    img.src = dataUrl;
+    img.onerror = () => {
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      reject(new Error("image load failed"));
+    };
+    img.src = imgSrc;
   });
 }
 

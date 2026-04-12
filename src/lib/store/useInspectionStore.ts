@@ -10,6 +10,8 @@ import {
 } from "@/types";
 import { DEMO_INSPECTIONS } from "@/data/demo";
 import { saveInspection, loadAllInspections } from "@/lib/storage/db";
+import { uploadPhoto } from "@/lib/firebase/photoStorage";
+import { cloudSaveInspection, cloudLoadInspections } from "@/lib/firebase/cloudDb";
 
 interface SaveStatus {
   status: "idle" | "saving" | "saved" | "error";
@@ -20,10 +22,12 @@ interface InspectionStore {
   inspections: Inspection[];
   saveStatus: SaveStatus;
   initialized: boolean;
+  userId: string | null;
 
   // Bootstrap
   initialize: () => Promise<void>;
   loadDemo: () => Promise<void>;
+  setUserId: (userId: string | null) => void;
 
   // Inspection CRUD
   createInspection: (data: Omit<Inspection, "id" | "createdAt" | "updatedAt" | "areas" | "status">) => Inspection;
@@ -58,6 +62,73 @@ function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/** Upload photos that have a local dataUrl but no storageUrl yet. */
+async function uploadMissingPhotos(
+  userId: string,
+  inspection: Inspection
+): Promise<Inspection> {
+  let changed = false;
+  const areas = await Promise.all(
+    inspection.areas.map(async (area) => {
+      const findings = await Promise.all(
+        area.findings.map(async (finding) => {
+          const photos = await Promise.all(
+            finding.photos.map(async (photo) => {
+              if (photo.storageUrl || !photo.dataUrl) return photo;
+              try {
+                const storageUrl = await uploadPhoto(
+                  userId,
+                  inspection.id,
+                  photo.id,
+                  photo.dataUrl
+                );
+                changed = true;
+                return { ...photo, storageUrl };
+              } catch {
+                return photo;
+              }
+            })
+          );
+          return { ...finding, photos };
+        })
+      );
+      return { ...area, findings };
+    })
+  );
+  if (!changed) return inspection;
+  return { ...inspection, areas };
+}
+
+/**
+ * When cloud data is newer, keep it but restore local dataUrls for photos
+ * we have locally (avoids re-downloading blobs we already have on-device).
+ */
+function mergeLocalPhotoData(cloud: Inspection, local: Inspection): Inspection {
+  const localPhotoMap = new Map<string, string>();
+  for (const area of local.areas) {
+    for (const finding of area.findings) {
+      for (const photo of finding.photos) {
+        if (photo.dataUrl) localPhotoMap.set(photo.id, photo.dataUrl);
+      }
+    }
+  }
+  if (localPhotoMap.size === 0) return cloud;
+  return {
+    ...cloud,
+    areas: cloud.areas.map((area) => ({
+      ...area,
+      findings: area.findings.map((finding) => ({
+        ...finding,
+        photos: finding.photos.map((photo) => {
+          const localDataUrl = localPhotoMap.get(photo.id);
+          if (localDataUrl) return { ...photo, dataUrl: localDataUrl };
+          return photo;
+        }),
+      })),
+    })),
+  };
+}
+
 function buildDefaultAreas(): InspectionArea[] {
   return INSPECTION_AREAS.map((name, i) => ({
     id: generateId(),
@@ -73,11 +144,39 @@ export const useInspectionStore = create<InspectionStore>()(
     inspections: [],
     saveStatus: { status: "idle" },
     initialized: false,
+    userId: null,
 
     initialize: async () => {
       if (get().initialized) return;
       const persisted = await loadAllInspections();
       set({ inspections: persisted, initialized: true });
+    },
+
+    setUserId: async (userId) => {
+      set({ userId });
+      if (!userId) return;
+      // Pull cloud data and merge when a user signs in
+      try {
+        const cloudInspections = await cloudLoadInspections(userId);
+        if (cloudInspections.length === 0) return;
+        const local = get().inspections;
+        const localMap = new Map(local.map((i) => [i.id, i]));
+        const merged: Inspection[] = cloudInspections.map((cloud) => {
+          const localInsp = localMap.get(cloud.id);
+          if (!localInsp) return cloud;
+          if (cloud.updatedAt > localInsp.updatedAt) {
+            return mergeLocalPhotoData(cloud, localInsp);
+          }
+          return localInsp;
+        });
+        const cloudIds = new Set(cloudInspections.map((i) => i.id));
+        const localOnly = local.filter((i) => !cloudIds.has(i.id));
+        const all = [...merged, ...localOnly];
+        set({ inspections: all });
+        for (const insp of all) await saveInspection(insp);
+      } catch (err) {
+        console.error("Cloud sync failed:", err);
+      }
     },
 
     loadDemo: async () => {
@@ -307,7 +406,24 @@ export const useInspectionStore = create<InspectionStore>()(
 
       set({ saveStatus: { status: "saving" } });
       try {
-        await saveInspection(inspection);
+        const { userId } = get();
+        let toSave = inspection;
+
+        // Upload any photos that have a dataUrl but no storageUrl yet
+        if (userId) {
+          toSave = await uploadMissingPhotos(userId, inspection);
+          if (toSave !== inspection) {
+            set((s) => ({
+              inspections: s.inspections.map((i) =>
+                i.id === inspectionId ? toSave : i
+              ),
+            }));
+          }
+          // Push to Firestore (strips dataUrls automatically)
+          await cloudSaveInspection(userId, toSave);
+        }
+
+        await saveInspection(toSave);
         set({ saveStatus: { status: "saved", lastSaved: new Date() } });
         setTimeout(() => set({ saveStatus: { status: "idle" } }), 2000);
       } catch {

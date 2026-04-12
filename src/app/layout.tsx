@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { ClientProviders } from "@/components/ui/ClientProviders";
 
 export const metadata: Metadata = {
   title: "InspectFlow AI — Building & Pest Inspection Reports",
@@ -31,7 +32,9 @@ export default function RootLayout({
         <link rel="apple-touch-icon" href="/icons/icon-192.png" />
         <meta name="mobile-web-app-capable" content="yes" />
       </head>
-      <body className="min-h-full bg-slate-50">{children}</body>
+      <body className="min-h-full bg-slate-50">
+        <ClientProviders>{children}</ClientProviders>
+      </body>
     </html>
   );
 }

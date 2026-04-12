@@ -109,6 +109,8 @@ export interface IssueMarker {
 export interface SessionPhoto {
   id: string;
   dataUrl: string;
+  /** Firebase Storage download URL — populated after upload, used for cross-device sync */
+  storageUrl?: string;
   /** Seconds since session start */
   timestampSeconds: number;
   capturedAt: string;
@@ -139,6 +141,8 @@ export interface AreaCaptureSession {
 export interface CapturedPhoto {
   id: string;
   dataUrl: string;
+  /** Firebase Storage download URL — populated after upload, used for cross-device sync */
+  storageUrl?: string;
   capturedAt: string;
   fileName?: string;
 }
