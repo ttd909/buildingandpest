@@ -498,190 +498,439 @@ function ReportFindingRow({
 
 // ─── PDF generation ───────────────────────────────────────────────────────────
 
+const SECTION_COLORS: Record<string, [number, number, number]> = {
+  major_defects: [239, 68, 68],
+  safety_hazards: [245, 158, 11],
+  pest_findings: [236, 72, 153],
+  minor_defects: [59, 130, 246],
+  maintenance_items: [99, 102, 241],
+};
+
 function generatePdfReport(
   inspection: any,
   findingsBySection: Record<ReportSection, Finding[]>,
   executiveSummary: string
 ): any {
-  // Dynamic import needed — caller handles this
-  // This function is called after jsPDF is imported
   const { jsPDF } = require("jspdf");
   const doc = new jsPDF({ unit: "mm", format: "a4" });
 
   const pageW = 210;
+  const pageH = 297;
   const margin = 20;
   const contentW = pageW - margin * 2;
   let y = 0;
 
+  const addFooter = () => {
+    const pageNum = doc.getCurrentPageInfo().pageNumber;
+    doc.setFontSize(8);
+    doc.setTextColor(180);
+    doc.text(
+      `${inspection.inspectorDetails?.company || "InspectFlow AI"}  ·  ${inspection.propertyAddress}`,
+      margin,
+      pageH - 8
+    );
+    doc.text(String(pageNum), pageW - margin, pageH - 8, { align: "right" });
+    doc.setTextColor(0);
+  };
+
   const addPage = () => {
     doc.addPage();
-    y = 20;
+    y = 25;
     addFooter();
   };
 
   const checkPageBreak = (neededHeight: number) => {
-    if (y + neededHeight > 270) addPage();
+    if (y + neededHeight > pageH - 18) addPage();
   };
 
-  const addFooter = () => {
-    doc.setFontSize(8);
-    doc.setTextColor(150);
-    doc.text(
-      `InspectFlow AI · ${inspection.companyName || ""}  ·  Page ${doc.getCurrentPageInfo().pageNumber}`,
-      margin,
-      290
-    );
-    doc.setTextColor(0);
-  };
+  // ── Page 1: Cover ──────────────────────────────────────────────────────────
+  doc.setFillColor(15, 23, 42);
+  doc.rect(0, 0, pageW, pageH, "F");
 
-  // ── Cover page ──
+  // Accent bar
   doc.setFillColor(30, 64, 175);
-  doc.rect(0, 0, 210, 297, "F");
-
-  doc.setFontSize(10);
-  doc.setTextColor(147, 197, 253);
-  doc.text(`${REPORT_INSPECTION_TYPE_LABELS[inspection.inspectionType]?.toUpperCase()} INSPECTION REPORT`, margin, 60);
-
-  doc.setFontSize(22);
-  doc.setTextColor(255, 255, 255);
-  const addressLines = doc.splitTextToSize(inspection.propertyAddress, contentW);
-  doc.text(addressLines, margin, 75);
-
-  doc.setFontSize(11);
-  doc.setTextColor(147, 197, 253);
-  y = 75 + addressLines.length * 10 + 8;
-  doc.text(`Client: ${inspection.clientName}`, margin, y);
-  doc.text(`Date: ${formatDate(inspection.inspectionDate)}`, margin, y + 8);
-  if (inspection.inspectorDetails) {
-    doc.text(`Inspector: ${inspection.inspectorDetails.name}`, margin, y + 16);
-    doc.text(`Licence: ${inspection.inspectorDetails.licenceNumber || "—"}`, margin, y + 24);
-  }
+  doc.rect(0, 0, 6, pageH, "F");
 
   doc.setFontSize(9);
-  doc.setTextColor(255, 255, 255);
-  doc.text("Prepared by InspectFlow AI", margin, 280);
+  doc.setTextColor(147, 197, 253);
+  doc.text(
+    `${REPORT_INSPECTION_TYPE_LABELS[inspection.inspectionType]?.toUpperCase()} INSPECTION REPORT`,
+    margin + 6,
+    90
+  );
 
-  // ── Page 2 — executive summary ──
+  doc.setFontSize(24);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(255, 255, 255);
+  const addressLines = doc.splitTextToSize(inspection.propertyAddress, contentW - 6);
+  doc.text(addressLines, margin + 6, 102);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(11);
+  doc.setTextColor(148, 163, 184);
+  y = 102 + addressLines.length * 11 + 10;
+
+  const coverFields = [
+    ["Client", inspection.clientName],
+    ["Date", formatDate(inspection.inspectionDate)],
+    ...(inspection.inspectorDetails
+      ? [
+          ["Inspector", inspection.inspectorDetails.name],
+          ["Licence", inspection.inspectorDetails.licenceNumber || "—"],
+          ["Company", inspection.inspectorDetails.company || "—"],
+        ]
+      : []),
+  ];
+  coverFields.forEach(([label, value]) => {
+    doc.setFontSize(8);
+    doc.setTextColor(100, 116, 139);
+    doc.text(label.toUpperCase(), margin + 6, y);
+    doc.setFontSize(11);
+    doc.setTextColor(226, 232, 240);
+    doc.text(value, margin + 6, y + 5);
+    y += 13;
+  });
+
+  doc.setFontSize(8);
+  doc.setTextColor(71, 85, 105);
+  doc.text("Prepared by InspectFlow AI", margin + 6, pageH - 14);
+
+  // ── Page 2: Executive Summary ──────────────────────────────────────────────
   doc.addPage();
   y = 25;
   addFooter();
 
-  doc.setFontSize(16);
-  doc.setTextColor(15, 23, 42);
-  doc.text("Executive Summary", margin, y);
-  y += 10;
+  // Page title bar
+  doc.setFillColor(15, 23, 42);
+  doc.rect(margin, y - 6, contentW, 12, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.setTextColor(255, 255, 255);
+  doc.text("EXECUTIVE SUMMARY", margin + 4, y + 1.5);
+  doc.setFont("helvetica", "normal");
+  y += 14;
 
   doc.setFontSize(10);
-  doc.setTextColor(71, 85, 105);
-  const summaryLines = doc.splitTextToSize(executiveSummary || "", contentW);
-  doc.text(summaryLines, margin, y);
-  y += summaryLines.length * 5 + 10;
+  doc.setTextColor(30, 41, 59);
+  const summaryLines = doc.splitTextToSize(executiveSummary || "No summary available.", contentW);
+  summaryLines.forEach((line: string) => {
+    checkPageBreak(6);
+    doc.text(line, margin, y);
+    y += 5.5;
+  });
+  y += 6;
 
-  // Summary stats table
-  const stats = [
-    ["Major Defects", String(findingsBySection.major_defects?.length || 0)],
-    ["Safety Hazards", String(findingsBySection.safety_hazards?.length || 0)],
-    ["Pest Findings", String(findingsBySection.pest_findings?.length || 0)],
-    ["Minor Defects", String(findingsBySection.minor_defects?.length || 0)],
-    ["Maintenance Items", String(findingsBySection.maintenance_items?.length || 0)],
+  // Stats grid
+  const statItems = [
+    { label: "Major Defects", count: findingsBySection.major_defects?.length || 0, color: SECTION_COLORS.major_defects },
+    { label: "Safety Hazards", count: findingsBySection.safety_hazards?.length || 0, color: SECTION_COLORS.safety_hazards },
+    { label: "Pest Findings", count: findingsBySection.pest_findings?.length || 0, color: SECTION_COLORS.pest_findings },
+    { label: "Minor Defects", count: findingsBySection.minor_defects?.length || 0, color: SECTION_COLORS.minor_defects },
+    { label: "Maintenance", count: findingsBySection.maintenance_items?.length || 0, color: SECTION_COLORS.maintenance_items },
   ];
+  const cellW = contentW / statItems.length;
+  statItems.forEach((stat, idx) => {
+    const cx = margin + idx * cellW;
+    const [r, g, b] = stat.color;
+    doc.setFillColor(r, g, b);
+    doc.roundedRect(cx, y, cellW - 3, 18, 2, 2, "F");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.setTextColor(255, 255, 255);
+    doc.text(String(stat.count), cx + (cellW - 3) / 2, y + 10, { align: "center" });
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7);
+    doc.text(stat.label, cx + (cellW - 3) / 2, y + 15.5, { align: "center" });
+  });
+  y += 24;
 
-  doc.setFontSize(9);
-  stats.forEach(([label, count]) => {
-    checkPageBreak(8);
-    doc.setTextColor(71, 85, 105);
-    doc.text(label, margin + 4, y);
+  // ── Page 3: Table of Contents ──────────────────────────────────────────────
+  addPage();
+
+  doc.setFillColor(15, 23, 42);
+  doc.rect(margin, y - 6, contentW, 12, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.setTextColor(255, 255, 255);
+  doc.text("TABLE OF CONTENTS", margin + 4, y + 1.5);
+  doc.setFont("helvetica", "normal");
+  y += 16;
+
+  const tocSections = SECTION_ORDER.filter(
+    (s) => findingsBySection[s]?.length > 0
+  );
+  const colW = contentW / 2;
+  tocSections.forEach((section, idx) => {
+    const col = idx % 2;
+    const row = Math.floor(idx / 2);
+    const cx = margin + col * colW;
+    const cy = y + row * 16;
+    const [r, g, b] = SECTION_COLORS[section] || [100, 100, 100];
+    doc.setFillColor(r, g, b);
+    doc.roundedRect(cx, cy, 8, 8, 1.5, 1.5, "F");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.setTextColor(255, 255, 255);
+    doc.text(String(idx + 1), cx + 4, cy + 5.5, { align: "center" });
+    doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
     doc.setTextColor(15, 23, 42);
-    doc.text(count, margin + contentW - 10, y, { align: "right" });
-    y += 7;
+    doc.text(SECTION_CONFIG[section].label.toUpperCase(), cx + 11, cy + 5.5);
+    doc.setFontSize(8);
+    doc.setTextColor(148, 163, 184);
+    doc.text(
+      `${findingsBySection[section].length} item${findingsBySection[section].length !== 1 ? "s" : ""}`,
+      cx + colW - 4,
+      cy + 5.5,
+      { align: "right" }
+    );
   });
+  y += Math.ceil(tocSections.length / 2) * 16 + 8;
 
-  // ── Defect sections ──
-  const sectionColors: Record<string, [number, number, number]> = {
-    major_defects: [239, 68, 68],
-    safety_hazards: [245, 158, 11],
-    pest_findings: [236, 72, 153],
-    minor_defects: [59, 130, 246],
-    maintenance_items: [99, 102, 241],
-  };
-
+  // ── Finding sections ───────────────────────────────────────────────────────
   SECTION_ORDER.forEach((section) => {
     const findings = findingsBySection[section];
     if (!findings || findings.length === 0) return;
     const cfg = SECTION_CONFIG[section];
-    const [r, g, b] = sectionColors[section] || [100, 100, 100];
+    const [r, g, b] = SECTION_COLORS[section] || [100, 100, 100];
 
-    checkPageBreak(20);
-    y += 5;
+    // Section starts on a new page
+    addPage();
 
-    // Section header
+    // Full-width section header
     doc.setFillColor(r, g, b);
-    doc.roundedRect(margin, y - 5, contentW, 10, 2, 2, "F");
-    doc.setFontSize(11);
+    doc.rect(margin, y - 6, contentW, 13, "F");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
     doc.setTextColor(255, 255, 255);
-    doc.text(cfg.label, margin + 4, y + 1);
-    y += 12;
+    doc.text(cfg.label.toUpperCase(), margin + 5, y + 2.5);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.text(
+      `${findings.length} item${findings.length !== 1 ? "s" : ""}`,
+      margin + contentW - 5,
+      y + 2.5,
+      { align: "right" }
+    );
+    y += 16;
 
     findings.forEach((finding, i) => {
-      checkPageBreak(30);
+      checkPageBreak(24);
+
       const title = finding.finalTitle || finding.aiTitle || "Finding";
       const wording = finding.finalWording || finding.aiProfessionalWording || "";
       const rec = finding.finalRecommendation || finding.aiRecommendation || "";
 
+      // Item number + title
+      doc.setFont("helvetica", "bold");
       doc.setFontSize(10);
       doc.setTextColor(15, 23, 42);
-      doc.text(`${i + 1}. ${title}`, margin, y);
-      y += 6;
+      doc.text(`Item ${i + 1}`, margin, y);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      doc.setTextColor(30, 41, 59);
+      const titleLines = doc.splitTextToSize(title, contentW - 22);
+      doc.text(titleLines, margin + 22, y);
+      y += Math.max(titleLines.length * 5.5, 6);
 
-      if (wording) {
-        doc.setFontSize(9);
-        doc.setTextColor(71, 85, 105);
-        const lines = doc.splitTextToSize(wording, contentW - 4);
-        lines.forEach((line: string) => {
-          checkPageBreak(5);
-          doc.text(line, margin + 4, y);
-          y += 4.5;
-        });
-      }
-
-      if (rec) {
-        checkPageBreak(10);
-        y += 1;
+      // Location
+      if (finding.areaName) {
         doc.setFontSize(8.5);
-        doc.setTextColor(r, g, b);
-        doc.text("Recommendation:", margin + 4, y);
-        y += 4;
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(100, 116, 139);
+        doc.text("Location: ", margin, y);
+        doc.setFont("helvetica", "normal");
         doc.setTextColor(71, 85, 105);
-        const recLines = doc.splitTextToSize(rec, contentW - 8);
-        recLines.forEach((line: string) => {
-          checkPageBreak(5);
-          doc.text(line, margin + 8, y);
-          y += 4.5;
-        });
+        doc.text(finding.areaName, margin + 19, y);
+        y += 5.5;
       }
 
-      y += 4;
+      // Severity badge
+      if (finding.severity) {
+        const sevLabels: Record<string, string> = {
+          major: "Major",
+          minor: "Minor",
+          safety: "Safety Hazard",
+          monitor: "Monitor",
+          pest: "Pest",
+        };
+        const sevColors: Record<string, [number, number, number]> = {
+          major: [239, 68, 68],
+          minor: [59, 130, 246],
+          safety: [245, 158, 11],
+          monitor: [107, 114, 128],
+          pest: [236, 72, 153],
+        };
+        const [sr, sg, sb] = sevColors[finding.severity] || [100, 100, 100];
+        const sevLabel = sevLabels[finding.severity] || finding.severity;
+        const badgeW = doc.getTextWidth(sevLabel) + 6;
+        doc.setFillColor(sr, sg, sb);
+        doc.roundedRect(margin, y, badgeW, 5.5, 1, 1, "F");
+        doc.setFontSize(7);
+        doc.setTextColor(255, 255, 255);
+        doc.setFont("helvetica", "bold");
+        doc.text(sevLabel, margin + 3, y + 3.8);
+        doc.setFont("helvetica", "normal");
+        y += 8;
+      }
+
+      // Description / wording
+      if (wording) {
+        checkPageBreak(10);
+        doc.setFontSize(8.5);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(100, 116, 139);
+        doc.text("Overall Condition:", margin, y);
+        doc.setFont("helvetica", "normal");
+        y += 5;
+        doc.setFontSize(9.5);
+        doc.setTextColor(30, 41, 59);
+        const wordingLines = doc.splitTextToSize(wording, contentW);
+        wordingLines.forEach((line: string) => {
+          checkPageBreak(5.5);
+          doc.text(line, margin, y);
+          y += 5.5;
+        });
+        y += 2;
+      }
+
+      // Recommendation
+      if (rec) {
+        checkPageBreak(14);
+        doc.setFillColor(239, 246, 255);
+        const recLines = doc.splitTextToSize(rec, contentW - 12);
+        const recBoxH = recLines.length * 5 + 10;
+        doc.roundedRect(margin, y, contentW, recBoxH, 2, 2, "F");
+        doc.setFontSize(8);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(r, g, b);
+        doc.text("Recommendation", margin + 4, y + 6);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(30, 41, 59);
+        doc.setFontSize(9);
+        recLines.forEach((line: string, li: number) => {
+          doc.text(line, margin + 4, y + 6 + (li + 1) * 5);
+        });
+        y += recBoxH + 4;
+      }
+
+      // Estimated cost
+      if (finding.estimatedCost) {
+        checkPageBreak(7);
+        doc.setFontSize(8.5);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(100, 116, 139);
+        doc.text("Estimated cost: ", margin, y);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(30, 41, 59);
+        doc.text(finding.estimatedCost, margin + 31, y);
+        y += 6;
+      }
+
+      // Photos — 2 per row, below all text
+      if (finding.photos && finding.photos.length > 0) {
+        const imgW = (contentW - 4) / 2;
+        const imgH = Math.round(imgW * 0.65);
+        const imgGap = 4;
+        for (let pi = 0; pi < finding.photos.length; pi += 2) {
+          checkPageBreak(imgH + imgGap);
+          try {
+            const p1 = finding.photos[pi];
+            const fmt1 = p1.dataUrl.includes("image/png") ? "PNG" : "JPEG";
+            doc.addImage(p1.dataUrl, fmt1, margin, y, imgW, imgH);
+            const p2 = finding.photos[pi + 1];
+            if (p2) {
+              const fmt2 = p2.dataUrl.includes("image/png") ? "PNG" : "JPEG";
+              doc.addImage(p2.dataUrl, fmt2, margin + imgW + imgGap, y, imgW, imgH);
+            }
+            y += imgH + imgGap;
+          } catch {
+            // skip unreadable image
+          }
+        }
+      }
+
+      // Divider between findings
+      if (i < findings.length - 1) {
+        checkPageBreak(8);
+        y += 2;
+        doc.setDrawColor(226, 232, 240);
+        doc.setLineWidth(0.3);
+        doc.line(margin, y, margin + contentW, y);
+        y += 6;
+      } else {
+        y += 6;
+      }
     });
   });
 
-  // ── Disclaimer ──
-  checkPageBreak(40);
-  y += 5;
-  doc.setFontSize(9);
-  doc.setTextColor(148, 163, 184);
-  doc.text("Limitations & Disclaimer", margin, y);
-  y += 5;
-  doc.setFontSize(8);
-  const disclaimer =
-    "This report was prepared as a visual inspection only. It is not an exhaustive investigation and is subject to the limitations noted in the full report. This report should be read in its entirety prior to any property transaction proceeding.";
-  const dLines = doc.splitTextToSize(disclaimer, contentW);
-  dLines.forEach((line: string) => {
-    doc.text(line, margin, y);
-    y += 4;
-  });
+  // ── Disclaimer & Inspector details ─────────────────────────────────────────
+  addPage();
 
-  addFooter();
+  doc.setFillColor(15, 23, 42);
+  doc.rect(margin, y - 6, contentW, 12, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.setTextColor(255, 255, 255);
+  doc.text("LIMITATIONS & DISCLAIMER", margin + 4, y + 1.5);
+  doc.setFont("helvetica", "normal");
+  y += 14;
+
+  doc.setFontSize(9);
+  doc.setTextColor(71, 85, 105);
+  const fullDisclaimer =
+    "This report was prepared in accordance with Australian Standard AS 4349.1 (Building Inspections) and/or AS 4349.3 (Timber Pest Inspections) as applicable. The inspection is a visual assessment only and does not include invasive, destructive, or exhaustive testing. The inspector is not responsible for defects not visible at the time of inspection. This report should be read in full prior to any property transaction proceeding.";
+  const dLines = doc.splitTextToSize(fullDisclaimer, contentW);
+  dLines.forEach((line: string) => {
+    checkPageBreak(5.5);
+    doc.text(line, margin, y);
+    y += 5.5;
+  });
+  y += 8;
+
+  if (inspection.inspectorDetails) {
+    doc.setFillColor(248, 250, 252);
+    doc.roundedRect(margin, y, contentW, 42, 2, 2, "F");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(15, 23, 42);
+    doc.text("INSPECTOR DETAILS", margin + 5, y + 8);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(71, 85, 105);
+    const fields = [
+      ["Name", inspection.inspectorDetails.name],
+      ["Company", inspection.inspectorDetails.company],
+      ["Licence", inspection.inspectorDetails.licenceNumber],
+      ["Phone", inspection.inspectorDetails.phone],
+      ["Email", inspection.inspectorDetails.email],
+    ].filter(([, v]) => v);
+    const colHalf = contentW / 2;
+    fields.forEach(([label, value], fi) => {
+      const col = fi % 2;
+      const row = Math.floor(fi / 2);
+      const fx = margin + 5 + col * colHalf;
+      const fy = y + 14 + row * 10;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7.5);
+      doc.setTextColor(148, 163, 184);
+      doc.text(label!.toUpperCase(), fx, fy);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(30, 41, 59);
+      doc.text(value!, fx, fy + 4.5);
+    });
+    y += 50;
+
+    // Signature line
+    doc.setDrawColor(203, 213, 225);
+    doc.setLineWidth(0.5);
+    doc.line(margin, y, margin + 70, y);
+    doc.setFontSize(8);
+    doc.setTextColor(148, 163, 184);
+    doc.text(`Signature — ${inspection.inspectorDetails.name}`, margin, y + 4.5);
+  }
+
   return doc;
 }
 
