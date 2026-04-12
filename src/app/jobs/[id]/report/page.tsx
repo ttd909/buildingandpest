@@ -75,10 +75,24 @@ export default function ReportBuilderPage({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inspection?.id]);
 
-  if (!initialized || !inspection) {
+  if (!initialized) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="text-slate-400 text-sm">Loading...</div>
+      </div>
+    );
+  }
+
+  if (!inspection) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-3">
+        <p className="text-slate-500 text-sm">Job not found.</p>
+        <button
+          onClick={() => router.push("/dashboard")}
+          className="text-blue-600 text-sm font-medium"
+        >
+          Back to dashboard
+        </button>
       </div>
     );
   }
