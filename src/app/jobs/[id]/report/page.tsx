@@ -115,9 +115,31 @@ export default function ReportBuilderPage({
   const handleGeneratePdf = async () => {
     setGeneratingPdf(true);
     try {
-      // Dynamically import jsPDF to avoid SSR issues
-      const { jsPDF } = await import("jspdf");
-      const doc = generatePdfReport(inspection, findingsBySection, localSummary);
+      await import("jspdf");
+
+      // Normalise every photo to JPEG via canvas so jsPDF can embed them
+      // regardless of source format (WebP, HEIC, PNG, etc.)
+      const normalisedFindingsBySection: Record<ReportSection, Finding[]> =
+        {} as Record<ReportSection, Finding[]>;
+      for (const section of SECTION_ORDER) {
+        const findings = findingsBySection[section] || [];
+        normalisedFindingsBySection[section] = await Promise.all(
+          findings.map(async (finding) => ({
+            ...finding,
+            photos: await Promise.all(
+              finding.photos.map(async (photo) => {
+                try {
+                  return { ...photo, dataUrl: await toJpegDataUrl(photo.dataUrl) };
+                } catch {
+                  return photo;
+                }
+              })
+            ),
+          }))
+        );
+      }
+
+      const doc = generatePdfReport(inspection, normalisedFindingsBySection, localSummary);
       doc.save(`InspectFlow_Report_${inspection.propertyAddress.replace(/[^a-z0-9]/gi, "_")}.pdf`);
       updateInspection(id, {
         status: "completed",
@@ -126,7 +148,6 @@ export default function ReportBuilderPage({
       router.push(`/jobs/${id}/complete`);
     } catch (err) {
       console.error("PDF generation failed:", err);
-      // Fallback: navigate to complete anyway
       updateInspection(id, {
         status: "completed",
         reportGeneratedAt: new Date().toISOString(),
@@ -494,6 +515,31 @@ function ReportFindingRow({
       )}
     </div>
   );
+}
+
+// ─── Photo normalisation ──────────────────────────────────────────────────────
+// jsPDF only supports JPEG and PNG. Camera photos may arrive as WebP, HEIC, or
+// other formats. Convert everything to JPEG via canvas before embedding.
+
+function toJpegDataUrl(dataUrl: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new window.Image();
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return reject(new Error("canvas unavailable"));
+        ctx.drawImage(img, 0, 0);
+        resolve(canvas.toDataURL("image/jpeg", 0.88));
+      } catch (e) {
+        reject(e);
+      }
+    };
+    img.onerror = () => reject(new Error("image load failed"));
+    img.src = dataUrl;
+  });
 }
 
 // ─── PDF generation ───────────────────────────────────────────────────────────
